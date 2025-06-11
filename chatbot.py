@@ -39,6 +39,7 @@ storage_type_mode = df['Storage type'].mode()[0] if not df['Storage type'].mode(
 df['Storage type'].fillna(storage_type_mode, inplace=True)
 df['GPU'].fillna("None", inplace=True)
 df['Screen'].fillna(round(df['Screen'].mean(), 1), inplace=True)
+df['Brand'] = df['Brand'].str.upper()
 logger.info("Data loaded and cleaned successfully.")
 
 # --- ChromaDB Setup ---
@@ -128,7 +129,7 @@ You are a top-tier, professional, and friendly laptop sales assistant. Your prim
 
 **Customer's Request:** "{user_request}"
 
-**Conversation History:**
+**Conversation History: (focus on recent interactions to understand context)**
 {history}
 
 Based **only** on the list of available laptops provided in the context, present all suitable products that are a good match for the customer's request, considering the conversation history for context.
@@ -164,18 +165,45 @@ Here are the best matches I found for you:
 )
 chain = prompt_template | llm
 
+
 # --- Retrieve-then-Filter Logic ---
-def parse_query_to_filters(user_request: str) -> dict:
-    filters = {}
+def parse_query_to_filters(user_request: str, memory: ConversationBufferMemory, filter_history: list) -> dict:
+    """
+    Parse the user's query to extract laptop search filters (USD only).
+    Incorporate context from conversation history if the query is ambiguous.
+    """
+    filters = filter_history[-1].copy() if filter_history else {}
     brands = ['dell', 'hp', 'asus', 'lenovo', 'msi', 'acer', 'apple', 'macbook']
+
+    # Load conversation history
+    # history = memory.load_memory_variables({})["history"]
+    
+    # Handle context-dependent queries (e.g., "cheaper", "less expensive")
+    if filter_history and any(keyword in user_request.lower() for keyword in ["cheaper", "less expensive", "more affordable"]):
+        # Safely retrieve filters from the previous message's additional_kwargs
+        # last_additional_kwargs = history[-2].additional_kwargs if len(history) >= 2 and hasattr(history[-2], 'additional_kwargs') else {}
+        # last_filters = last_additional_kwargs.get("filters", {})
+        last_filters = filter_history[-1]
+        filters.update(last_filters)  # Retain previous filters
+        if last_filters.get("max_price_usd"):
+            filters["max_price_usd"] = last_filters["max_price_usd"] * 0.9  # Reduce price by 10%
+    
+    # Detect brand
     for brand in brands:
         if re.search(r'\b' + brand + r'\b', user_request, re.IGNORECASE):
             filters['brand'] = 'APPLE' if brand in ['apple', 'macbook'] else brand.upper()
             break
+    
+    # Detect RAM
     ram_match = re.search(r'(\d+)\s*gb\s*ram', user_request, re.IGNORECASE)
     if ram_match:
         filters['ram_gb'] = int(ram_match.group(1))
-    price_match = re.search(r'(under|below|less than|over|above|more than|around)\s*\$?(\d+)', user_request, re.IGNORECASE)
+    
+    # Detect price (USD only)
+    price_match = re.search(
+        r'(under|below|less than|over|above|more than|around)\s*\$?(\d+\.?\d*)',
+        user_request, re.IGNORECASE
+    )
     if price_match:
         limit_type, value = price_match.groups()
         price_value = float(value)
@@ -186,43 +214,82 @@ def parse_query_to_filters(user_request: str) -> dict:
         elif limit_type == 'around':
             filters['min_price_usd'] = price_value * 0.9
             filters['max_price_usd'] = price_value * 1.1
+    
+    # Detect touchscreen
     if re.search(r'touch\s*screen|touchscreen', user_request, re.IGNORECASE):
         filters['touchscreen'] = 'Yes'
-    return filters
-
-def filter_laptops(user_request: str) -> str:
-    try:
-        results = collection.query(query_texts=[user_request], n_results=25, include=["metadatas"])
-    except Exception as e:
-        logger.error(f"Error during retrieval: {e}")
-        return "An error occurred while searching for laptops. Please try again later."
     
+    # Detect usage intent
+    if "gaming" in user_request.lower():
+        filters['gpu'] = ['NVIDIA', 'AMD']  # Require strong GPU
+        filters['ram_gb'] = filters.get('ram_gb', 16)  # Default to 16GB RAM
+        filters['screen_inches'] = filters.get('screen_inches', 15.6)  # Default to ≥15.6 inches
+    elif "student" in user_request.lower() or "study" in user_request.lower():
+        filters['max_price_usd'] = filters.get('max_price_usd', 500)  # Default to under $500
+        filters['ram_gb'] = filters.get('ram_gb', 8)  # Default to 8GB RAM
+    
+    # Detect screen size
+    screen_match = re.search(r'(\d+\.?\d*)\s*(inch|")', user_request, re.IGNORECASE)
+    if screen_match:
+        filters['screen_inches'] = float(screen_match.group(1))
+    
+    # Detect storage (SSD/HDD)
+    storage_match = re.search(r'(\d+)\s*(gb|tb)\s*(ssd|hdd)', user_request, re.IGNORECASE)
+    if storage_match:
+        size, unit, storage_type = storage_match.groups()
+        size = float(size) * (1000 if unit.lower() == 'tb' else 1)
+        filters['storage_gb'] = size
+        filters['storage_type'] = storage_type.upper()
+    
+    return filters
+def filter_laptops(user_request: str, filters: dict) -> str:
+    where_clause = {"$and": []} if len(filters) > 1 else {}
+
+    if filters.get("brand"):
+        where_clause["$and"].append({"brand": filters["brand"]}) if len(filters) > 1 else where_clause.update({"brand": filters["brand"]})
+    if filters.get("ram_gb"):
+        where_clause["$and"].append({"ram_gb": filters["ram_gb"]}) if len(filters) > 1 else where_clause.update({"ram_gb": filters["ram_gb"]})
+    if filters.get("touchscreen"):
+        where_clause["$and"].append({"touchscreen": filters["touchscreen"]}) if len(filters) > 1 else where_clause.update({"touchscreen": filters["touchscreen"]})
+    if filters.get("storage_gb"):
+        where_clause["$and"].append({"storage_gb": filters["storage_gb"]}) if len(filters) > 1 else where_clause.update({"storage_gb": filters["storage_gb"]})
+    if filters.get("storage_type"):
+        where_clause["$and"].append({"storage_type": filters["storage_type"]}) if len(filters) > 1 else where_clause.update({"storage_type": filters["storage_type"]})
+    if filters.get("screen_inches"):
+        where_clause["$and"].append({"screen_inches": filters["screen_inches"]}) if len(filters) > 1 else where_clause.update({"screen_inches": filters["screen_inches"]})
+
+    if len(where_clause.get("$and", [])) == 0:
+        where_clause = {} if not where_clause else where_clause
+    elif len(where_clause["$and"]) == 1:
+        where_clause = where_clause["$and"][0]
+
+    print("where_clause:", where_clause)
+    results = collection.query(
+        query_texts=[user_request],
+        n_results=50,  # Tăng số kết quả ban đầu để có nhiều lựa chọn hơn
+        where=where_clause if where_clause else None,
+        include=["metadatas"]
+    )
+
     if not results or not results.get('metadatas') or not results['metadatas'][0]:
         return "I'm sorry, I couldn't find any relevant laptops for your request."
     
-    filters = parse_query_to_filters(user_request)
-    logger.info(f"Parsed filters from query: {filters}")
-    
-    retrieved_metadatas = results['metadatas'][0]
     filtered_laptops = []
-    
-    for meta in retrieved_metadatas:
+    for meta in results['metadatas'][0]:
         is_match = True
-        if filters.get('brand') and meta.get('brand', '').upper() != filters['brand']:
+        price_usd = meta.get('price_usd')
+        
+        if filters.get('max_price_usd') and price_usd > filters['max_price_usd']:
             is_match = False
-        if filters.get('ram_gb') and meta.get('ram_gb') != filters['ram_gb']:
+        if filters.get('min_price_usd') and price_usd < filters['min_price_usd']:
             is_match = False
-        if filters.get('max_price_usd') and meta.get('price_usd') > filters['max_price_usd']:
-            is_match = False
-        if filters.get('min_price_usd') and meta.get('price_usd') < filters['min_price_usd']:
-            is_match = False
-        if filters.get('touchscreen') and meta.get('touchscreen') != filters['touchscreen']:
+        if filters.get('gpu') and not any(gpu in meta.get('gpu', '').upper() for gpu in filters['gpu']):
             is_match = False
         if is_match:
             filtered_laptops.append(meta)
     
     if not filtered_laptops:
-        return "Unfortunately, I couldn't find any laptops that perfectly match all your criteria (like price, brand, or RAM). Would you like to try a broader search?"
+        return "Unfortunately, I couldn't find any laptops that perfectly match all your criteria. Would you like to try a broader search?"
     
     context_list = []
     for meta in filtered_laptops[:5]:
@@ -236,52 +303,35 @@ def filter_laptops(user_request: str) -> str:
             f"  - Screen: {meta['screen_inches']}\" {'Touchscreen' if meta['touchscreen'] == 'Yes' else 'Non-Touch'}\n"
             f"  - Price: ${meta['price_usd']:,.2f}"
         )
-    context = "\n".join(context_list)
-    
-    logger.info("--- Clean Context Sent to LLM ---")
-    logger.info(context)
-    logger.info("---------------------------------")
-    
-    return context
+    return "\n".join(context_list)
 
-def process_query(user_request: str) -> str:
-    """Xử lý truy vấn với ConversationBufferMemory"""
-    # Kiểm tra intent
+def process_query(user_request: str, filter_history: list) -> str:
     intent = detect_intent(user_request)
-    logger.info(f"Detected intent: {intent}")
-
-    # Xử lý intent đặc biệt
+    print("intent", intent)  # Debugging line to check detected intent
     if intent != "search":
         response = handle_intent(intent, user_request)
         memory.save_context({"user_request": user_request}, {"response": response})
         return response
-
-    # Tìm kiếm laptop
-    context = filter_laptops(user_request)
     
-    # Lấy lịch sử hội thoại từ ConversationBufferMemory
+    filters = parse_query_to_filters(user_request, memory, filter_history)  # Pass memory
+    print("PARSE", filters)  # Debugging line to check parsed filters
+    filter_history.append(filters)
+    context = filter_laptops(user_request, filters)
+    print("CONTEXT", context)  # Debugging line to check the context
     history = memory.load_memory_variables({})["history"]
-    history_str = ""
-    for msg in history:
-        role = "User" if msg.type == "human" else "Assistant"
-        history_str += f"{role}: {msg.content}\n"
-
-    # Gửi truy vấn và lịch sử đến LLM
-    try:
-        response = chain.invoke({
-            "user_request": user_request,
-            "context": context if "Product:" in context else "",
-            "history": history_str
-        })
-        response_text = response.content.strip()
-        
-        # Lưu truy vấn và phản hồi vào ConversationBufferMemory
-        memory.save_context({"user_request": user_request}, {"response": response_text})
-        
-        return response_text
-    except Exception as e:
-        logger.error(f"Error during LLM generation: {e}")
-        return f"An error occurred while generating the response: {e}"
+    history_str = "\n".join([f"{'User' if msg.type == 'human' else 'Assistant'}: {msg.content}" for msg in history[-6:]])
+    
+    response = chain.invoke({
+        "user_request": user_request,
+        "context": context,
+        "history": history_str
+    })
+    # Save filters in additional_kwargs
+    memory.save_context(
+        {"user_request": user_request},
+        {"response": response.content}
+    )
+    return response.content
 
 def clear_memory():
     """Xóa bộ nhớ của ConversationBufferMemory khi bắt đầu phiên mới"""

@@ -2,18 +2,22 @@ import streamlit as st
 from chatbot import process_query, clear_memory, load_memory_from_history
 import uuid
 from history import init_db, save_chat_session, get_chat_sessions, load_chat_session
-
+from datetime import datetime
 # Khởi tạo DB
 init_db()
 
 # Cấu hình trang
 st.set_page_config(page_title="Laptop Chatbot", page_icon="💻")
 
+# print("session_state:", st.session_state)
+
 # Khởi tạo lịch sử chat và session_id nếu chưa có
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
+if "filter_history" not in st.session_state:
+    st.session_state.filter_history = []
 
 # Sidebar
 st.sidebar.title("🛠 Chat History")
@@ -22,26 +26,31 @@ st.sidebar.title("🛠 Chat History")
 if st.sidebar.button("🆕 New Chat"):
     st.session_state.chat_history = []
     st.session_state.session_id = str(uuid.uuid4())  # Tạo session_id mới
+    st.session_state.filter_history = []
     clear_memory()
     st.rerun()
 
 # Hiển thị danh sách phiên đã lưu
 sessions = get_chat_sessions()
+# print("sessions:", sessions)
 if sessions:
-    session_options = [f"Session {i+1} ({s[1]})" for i, s in enumerate(sessions)]
-    selected_session = st.sidebar.selectbox(
-        "📜 Load previous session",
-        ["None"] + session_options,
-        key="session_select"  # Đảm bảo selectbox có key duy nhất
-    )
-    
-    if selected_session != "None":
-        selected_session_id = sessions[session_options.index(selected_session) - 1][0]
-        if selected_session_id != st.session_state.session_id:  # Chỉ tải nếu session_id khác
-            st.session_state.chat_history = load_chat_session(selected_session_id)
-            st.session_state.session_id = selected_session_id
-            load_memory_from_history(st.session_state.chat_history)
-            st.rerun()
+    st.sidebar.markdown("### Recent Sessions")
+    # Sắp xếp các phiên theo created_at giảm dần (gần nhất trước)
+    for session_id, created_at in sorted(sessions, key=lambda x: x[1], reverse=True):
+        # Định dạng thời gian cho dễ đọc
+        try:
+            formatted_time = datetime.fromisoformat(created_at).strftime("%b %d, %Y %H:%M")
+        except ValueError:
+            formatted_time = created_at
+        
+        # Tạo nút cho mỗi phiên
+        session_label = f"Session {session_id[:8]} - {formatted_time}"
+        if st.sidebar.button(session_label, key=f"session_{session_id}"):
+            if session_id != st.session_state.session_id:
+                st.session_state.chat_history, st.session_state.filter_history = load_chat_session(session_id)
+                st.session_state.session_id = session_id
+                load_memory_from_history(st.session_state.chat_history)
+                st.rerun()
 else:
     st.sidebar.text("No previous sessions found.")
 
@@ -69,7 +78,7 @@ if user_input:
     with st.chat_message("assistant"):
         placeholder = st.empty()
         placeholder.markdown("💬 Processing...")
-        result = process_query(user_input)
+        result = process_query(user_input, st.session_state.filter_history)
         placeholder.empty()
         st.markdown(result)
 
@@ -77,7 +86,7 @@ if user_input:
     st.session_state.chat_history.append({"role": "assistant", "message": result})
 
     # Lưu tự động vào cơ sở dữ liệu
-    save_chat_session(st.session_state.session_id, st.session_state.chat_history)
+    save_chat_session(st.session_state.session_id, st.session_state.chat_history, st.session_state.filter_history)
     st.success("✅ Session saved automatically.")
 
     # Cập nhật giao diện
