@@ -1,3 +1,7 @@
 venv/
 .env
 __pycache__/
+chroma_data_en/
+.chat_history.db
+.data_hash_en.txt
+.idea/
