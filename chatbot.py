@@ -9,7 +9,10 @@ from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
 from langchain_together import ChatTogether
 from langchain.memory import ConversationBufferMemory
-from intents import detect_intent, handle_intent
+from intents import detect_intent, handle_intent, handle_compare
+
+#LCEL
+
 
 # --- Setup Logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -28,7 +31,7 @@ memory = ConversationBufferMemory(return_messages=True, input_key="user_request"
 embedding_function = SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
 llm = ChatTogether(
     model="meta-llama/Llama-3-8B-chat-hf",
-    temperature=0.2,
+    temperature=0.3,
     max_tokens=1024,
     api_key=api_key
 )
@@ -78,7 +81,7 @@ def initialize_collection():
         logger.info("No existing collection found. Creating a new one.")
     
     collection = client.create_collection(collection_name, embedding_function=embedding_function)
-    
+    #combine fulltext search and embedding search 
     documents, metadatas, ids = [], [], []
     for idx, row in df.iterrows():
         touch_text = "a touchscreen" if row['Touch'] == 'Yes' else "a non-touch screen"
@@ -121,6 +124,11 @@ def initialize_collection():
 
 collection = initialize_collection()
 
+#Compare 2 types of laptop
+#Get order key -> change the prompt based on query (do not list,..)
+#Change the temperature 
+#System prompt +  user prompt -> change the user prompt 
+
 # --- Prompt Template ---
 prompt_template = PromptTemplate(
     input_variables=["user_request", "context", "history"],
@@ -131,38 +139,98 @@ You are a top-tier, professional, and friendly laptop sales assistant. Your prim
 
 **Conversation History: (focus on recent interactions to understand context)**
 {history}
-
-Based **only** on the list of available laptops provided in the context, present all suitable products that are a good match for the customer's request, considering the conversation history for context.
-
----
-**CRITICAL INSTRUCTIONS:**
-
-1.  **Format Your Response EXACTLY like the example below.** Use Markdown for bolding and bullet points. Each specification must be on a new line.
-2.  **Be Concise:** Start the response directly with the recommendations. Do not add introductory sentences like "Based on your request...".
-3.  **Strictly Adhere to Data:** Only use information from the "Available Laptops" section. Do not invent specs or products.
-4.  **Justify Your Choice:** Include a short, one-sentence "Reasoning:" that explains why the laptop is a good match.
-5.  **Handle Empty Context:** If the "Available Laptops" section is empty, respond with **only** this exact sentence: "Unfortunately, I couldn't find any laptops that perfectly match all your criteria in our current inventory. Would you like to try a broader search?"
+**Available Laptops:**  
+{context}
 
 ---
-**EXAMPLE OF THE REQUIRED OUTPUT FORMAT:**
+
+**GENERAL INSTRUCTIONS:**
+
+1. Always respond using **Markdown** format.
+2. Only use laptops listed in the "Available Laptops" section. **Never make up specs or products**.
+3. Keep the tone concise, helpful, and professional.
+4. If the context is empty, respond exactly with:  
+   "Unfortunately, I couldn't find any laptops that perfectly match all your criteria in our current inventory. Would you like to try a broader search?"
+---
+
+**HANDLE THE FOLLOWING SCENARIOS:**
+
+### 🔹 1. Recommendation (Default)
+- If the customer asks for a suggestion, list all matching laptops.
+- Follow this format:
 
 Here are the best matches I found for you:
 
-- **HP Spectre x360 14**
-  - **Status:** New
-  - **CPU:** Intel Core i7-1355U
-  - **RAM:** 16GB
-  - **Storage:** 1TB SSD
-  - **GPU:** Intel Iris Xe
-  - **Screen:** 13.5" Touchscreen
-  - **Price:** $1249.99
-  - **Reasoning:** This laptop perfectly matches your request for a lightweight touchscreen model around $1200.
+- **Laptop Name**
+  - **Status:** New/Used
+  - **CPU:** ...
+  - **RAM:** ...
+  - **Storage:** ...
+  - **GPU:** ...
+  - **Screen:** ...
+  - **Price:** ...
+  - **Reasoning:** Short explanation why it matches
 
 ---
-**Available Laptops:**
-{context}
+
+### 🔹 2. Comparison (e.g. "Compare X and Y")
+- Format the output as a **Markdown table** comparing specs side-by-side:
+
+| Spec     | Laptop A         | Laptop B         |
+|----------|------------------|------------------|
+| CPU      | Intel Core i5... | Intel Core i7... |
+| RAM      | 8GB              | 16GB             |
+| Storage  | 256GB SSD        | 512GB SSD        |
+| GPU      | Intel Iris Xe    | NVIDIA MX450     |
+| Price    | $899.00          | $1099.00         |
+| Reasoning| A is cheaper...  | B is more powerful... |
+
+---
+
+### 🔹 3. Pick One (e.g. "Which one should I choose?")
+- Return only **one product** and explain why it’s the better choice.
+- Format:
+
+I recommend **Laptop Name** because:
+
+- **CPU:** ...
+- **RAM:** ...
+- **Storage:** ...
+- **Price:** ...
+- **Reasoning:** ...
+
+---
+
+### 🔹 4. Order or Rank (e.g. "Sort by price/RAM")
+- Return a **sorted list** of matching laptops ordered by the requested criteria.
+- Format:
+
+Here are the laptops sorted by [criteria]:
+
+1. **Laptop A**
+   - **Price:** $799
+   - **RAM:** 8GB
+   - ...
+
+2. **Laptop B**
+   - **Price:** $999
+   - **RAM:** 16GB
+   - ...
+
+---
+
+### 🔹 5. Filter Further (e.g. "Which one is lighter?", "Which one has better battery?")
+- Apply an extra filter based on the user's clarification or follow-up and return refined results.
+
+---
+
+### 🔹 6. Not Found Case
+If no matching laptops are found, return:
+
+"Unfortunately, I couldn't find any laptops that perfectly match all your criteria in our current inventory. Would you like to try a broader search?"
 """
 )
+
 chain = prompt_template | llm
 
 
@@ -308,7 +376,8 @@ def filter_laptops(user_request: str, filters: dict) -> str:
 def process_query(user_request: str, filter_history: list) -> str:
     intent = detect_intent(user_request)
     print("intent", intent)  # Debugging line to check detected intent
-    if intent != "search":
+   
+    if intent != "search" and intent not in ["compare", "pick_one", "sort", "filter_further"]:
         response = handle_intent(intent, user_request)
         memory.save_context({"user_request": user_request}, {"response": response})
         return response

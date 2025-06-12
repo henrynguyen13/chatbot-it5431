@@ -1,4 +1,5 @@
 import re
+import pandas as pd
 
 
 def detect_intent(query: str) -> str:
@@ -29,6 +30,8 @@ def detect_intent(query: str) -> str:
             r"^(what can you do|how can you help|your capabilities|what do you do|help me|assist me|support|your purpose)",
             query):
         return "capabilities"
+    elif re.search(r'\bcompare\b', query):
+        return "compare"
 
     # Intent tìm kiếm - phát hiện các từ khóa liên quan đến laptop và thông số kỹ thuật
     laptop_keywords = [
@@ -70,3 +73,34 @@ def handle_intent(intent: str, user_request: str = "") -> str:
     }
 
     return responses.get(intent, responses["unknown"])
+
+def handle_compare(user_request: str, df: pd.DataFrame) -> str:
+    # Expect “Compare Dell XPS 13 and MacBook Air”
+    match = re.search(
+        r'compare\s+(.+?)\s+(?:and|with|vs)\s+(.+)', 
+        user_request, re.IGNORECASE
+    )
+    if not match:
+        return ("Please specify two laptops, e.g. “Compare Dell XPS 13 and MacBook Air.”")
+    name1, name2 = match.group(1).strip(), match.group(2).strip()
+
+    row1 = df[df['Laptop'].str.contains(name1, case=False)]
+    row2 = df[df['Laptop'].str.contains(name2, case=False)]
+    if row1.empty or row2.empty:
+        return "One or both models weren’t found in our dataset."
+
+    def specs(r):
+        return {
+            "CPU": r['CPU'],
+            "RAM": f"{r['RAM']}GB",
+            "Storage": f"{r['Storage']}GB {r['Storage type']}",
+            "GPU": r['GPU'],
+            "Screen": f"{r['Screen']}\" {'Touchscreen' if r['Touch']=='Yes' else 'Non-Touch'}",
+            "Price": f"${r['Final Price']}"
+        }
+    s1, s2 = specs(row1.iloc[0]), specs(row2.iloc[0])
+
+    lines = [f"**{row1.iloc[0]['Laptop']}** vs **{row2.iloc[0]['Laptop']}**"]
+    for k in s1:
+        lines.append(f"- **{k}:** {s1[k]}  |  {s2[k]}")
+    return "\n".join(lines)
