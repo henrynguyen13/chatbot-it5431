@@ -9,10 +9,9 @@ from dotenv import load_dotenv
 from langchain.prompts import PromptTemplate
 from langchain_together import ChatTogether
 from langchain.memory import ConversationBufferMemory
-from intents import detect_intent, handle_intent, handle_compare
+from intents import detect_intent, handle_intent, handle_compare, handle_pick_one, handle_buy_laptop
 
 #LCEL
-
 
 # --- Setup Logging ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -188,16 +187,23 @@ Here are the best matches I found for you:
 ---
 
 ### 🔹 3. Pick One (e.g. "Which one should I choose?")
-- Return only **one product** and explain why it’s the better choice.
+- **STRICTLY CHOOSE ONLY ONE LAPTOP FROM THE CONTEXT BELOW**
+- **NEVER CHOOSE A LAPTOP NOT LISTED IN THE CONTEXT**
+- Compare the top 2 options in the context and select the best one
 - Format:
 
-I recommend **Laptop Name** because:
+After careful comparison, my top recommendation is **[Laptop Name EXACTLY AS IN CONTEXT]** because:
 
 - **CPU:** ...
 - **RAM:** ...
 - **Storage:** ...
 - **Price:** ...
-- **Reasoning:** ...
+- **Reasoning:** Short comparison highlighting why this is better than the alternative
+
+**IMPORTANT:**
+1. You MUST select only ONE laptop
+2. The chosen laptop MUST be from the context
+3. Never suggest unlisted laptops
 
 ---
 
@@ -381,7 +387,30 @@ def process_query(user_request: str, filter_history: list) -> str:
         response = handle_intent(intent, user_request)
         memory.save_context({"user_request": user_request}, {"response": response})
         return response
-    
+
+    if intent == "pick_one":
+        response = handle_pick_one(user_request, df)
+        memory.save_context({"user_request": user_request}, {"response": response})
+        return response
+
+    if intent == "buy_laptop":
+        # Trích xuất tên laptop từ request
+        laptop_match = re.search(
+            r"(asus|hp|lenovo|dell|msi|acer|apple|macbook|vivobook|ideapad|inspiron|swift|xps|thinkpad|surface)[\w\s-]*",
+            user_request, re.IGNORECASE
+        )
+        laptop_name = laptop_match.group(0) if laptop_match else "laptop"
+
+        # Trả về mã HTML/JS để kích hoạt form
+        return f"""
+           <script>
+           setTimeout(() => {{
+               document.getElementById('buy-laptop-btn').click();
+               document.getElementById('laptop-name').value = '{laptop_name}';
+           }}, 500);
+           </script>
+           """
+
     filters = parse_query_to_filters(user_request, memory, filter_history)  # Pass memory
     print("PARSE", filters)  # Debugging line to check parsed filters
     filter_history.append(filters)

@@ -1,15 +1,36 @@
-import streamlit as st
-from chatbot import process_query, clear_memory, load_memory_from_history
+import re
 import uuid
-from history import init_db, save_chat_session, get_chat_sessions, load_chat_session
 from datetime import datetime
+
+import streamlit as st
+
+from chatbot import process_query, clear_memory, load_memory_from_history
+from history import init_db, save_chat_session, get_chat_sessions, load_chat_session
+from intents import handle_buy_laptop
+from invoice import init_invoice_table
+
 # Khởi tạo DB
 init_db()
+init_invoice_table()
 
 # Cấu hình trang
 st.set_page_config(page_title="Laptop Chatbot", page_icon="💻")
 
 # print("session_state:", st.session_state)
+
+# Thêm nút ẩn để kích hoạt form
+st.markdown("""
+<button id="buy-laptop-btn" style="display:none;"></button>
+<input type="hidden" id="laptop-name">
+""", unsafe_allow_html=True)
+
+# Thêm form đặt hàng (ẩn ban đầu)
+if "show_buy_form" not in st.session_state:
+    st.session_state.show_buy_form = False
+
+if st.session_state.show_buy_form:
+    laptop_name = st.session_state.buy_laptop_name
+    handle_buy_laptop(laptop_name)
 
 # Khởi tạo lịch sử chat và session_id nếu chưa có
 if "chat_history" not in st.session_state:
@@ -24,6 +45,7 @@ st.sidebar.title("🛠 Chat History")
 
 # Nút tạo phiên chat mới
 if st.sidebar.button("🆕 New Chat"):
+    st.session_state.show_buy_form = False
     st.session_state.chat_history = []
     st.session_state.session_id = str(uuid.uuid4())  # Tạo session_id mới
     st.session_state.filter_history = []
@@ -55,7 +77,7 @@ else:
     st.sidebar.text("No previous sessions found.")
 
 # Tiêu đề
-st.title("💻 Chatbot Tư vấn Mua Laptop")
+st.title("💻 Chatbot Laptop Advisor")
 
 # Hiển thị lịch sử chat
 for chat in st.session_state.chat_history:
@@ -79,8 +101,16 @@ if user_input:
         placeholder = st.empty()
         placeholder.markdown("💬 Processing...")
         result = process_query(user_input, st.session_state.filter_history)
-        placeholder.empty()
-        st.markdown(result)
+
+        # Kiểm tra nếu kết quả chứa mã kích hoạt form
+        if "<script>" in result:
+            st.markdown(result, unsafe_allow_html=True)
+            st.session_state.show_buy_form = True
+            laptop_name = re.search(r"document.getElementById\('laptop-name'\).value = '(.*?)'", result).group(1)
+            st.session_state.buy_laptop_name = laptop_name
+        else:
+            placeholder.empty()
+            st.markdown(result)
 
     # Thêm câu trả lời vào lịch sử
     st.session_state.chat_history.append({"role": "assistant", "message": result})
