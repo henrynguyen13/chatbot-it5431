@@ -407,54 +407,58 @@ def clean_key(key: str) -> str:
 
 
 def handle_buy_laptop(laptop_name: str):
-    # Tạo key duy nhất bằng timestamp
-    timestamp = int(time.time() * 1000)  # Sử dụng timestamp để đảm bảo độc nhất
+    # Generate a unique key using timestamp
+    # timestamp = int(time.time() * 1000)
+    timestamp = 1
     form_key = f"buy_form_{clean_key(laptop_name)}_{timestamp}"
 
     st.subheader("📝 Order Form")
     st.write(f"You're ordering: **{laptop_name}**")
 
-    # Sử dụng key duy nhất cho form
-    with st.form(key=form_key):
-        # Tạo key duy nhất cho mỗi widget
+    # Create a unique form
+    with st.form(key=form_key, clear_on_submit=False):
+        # Create unique keys for each widget
         full_name = st.text_input("Full Name", key=f"full_name_{timestamp}")
         phone = st.text_input("Phone Number", key=f"phone_{timestamp}")
         address = st.text_area("Delivery Address", key=f"address_{timestamp}")
 
+        # Submit buttons
         submitted = st.form_submit_button("✅ Confirm Order")
         cancel = st.form_submit_button("❌ Cancel Order")
 
-        if cancel:
+    if cancel:
+        st.session_state.show_buy_form = False
+        st.rerun()
+
+    if submitted:
+        # Validate required fields
+        if not full_name or not phone or not address:
+            st.error("Please fill all required fields!")
+        else:
+            # Process the order
+            order_number = get_invoice_count() + 1
+            insert_invoice(full_name, laptop_name, phone, address)
             st.session_state.show_buy_form = False
-            st.rerun()
 
-        if submitted:
-            if not full_name or not phone or not address:
-                st.error("Please fill all required fields!")
-            else:
-                # Lấy số đơn hàng hiện tại
-                order_number = get_invoice_count() + 1
+            # Display confirmation message
+            st.success("🎉 Order confirmed! Thank you for your purchase!")
+            st.balloons()
 
-                insert_invoice(full_name, laptop_name, phone, address)
-                st.session_state.show_buy_form = False
+            # Show order details
+            st.divider()
+            st.subheader("📦 Order Details")
+            st.markdown(f"**Order Number:** #ORD-{order_number:04d}")
+            st.markdown(f"**Product:** {laptop_name}")
+            st.markdown(f"**Customer:** {full_name}")
+            st.markdown(f"**Phone:** {phone}")
+            st.markdown(f"**Address:** {address}")
+            st.markdown("**Status:** Processing - Thank you for your order. We'll contact you shortly to confirm delivery details.")
 
-                st.success("🎉 Order confirmed! Thank you for your purchase!")
-                st.balloons()
-
-                st.divider()
-                st.subheader("📦 Order Details")
-                st.markdown(f"**Order Number:** #ORD-{order_number:04d}")
-                st.markdown(f"**Product:** {laptop_name}")
-                st.markdown(f"**Customer:** {full_name}")
-                st.markdown(f"**Phone:** {phone}")
-                st.markdown(f"**Address:** {address}")
-                st.markdown("**Status:** Processing - We'll contact you shortly")
-
-                # Tự động làm mới giao diện sau 3 giây
-                st.markdown("""
-                <script>
-                setTimeout(function() {
-                    window.location.reload();
-                }, 3000);
-                </script>
-                """, unsafe_allow_html=True)
+            # Auto-refresh the interface after 3 seconds
+            st.markdown("""
+            <script>
+            setTimeout(function() {
+                window.location.reload();
+            }, 1000);
+            </script>
+            """, unsafe_allow_html=True)

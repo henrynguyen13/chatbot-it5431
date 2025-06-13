@@ -28,9 +28,9 @@ st.markdown("""
 if "show_buy_form" not in st.session_state:
     st.session_state.show_buy_form = False
 
-if st.session_state.show_buy_form:
-    laptop_name = st.session_state.buy_laptop_name
-    handle_buy_laptop(laptop_name)
+# if st.session_state.show_buy_form:
+#     laptop_name = st.session_state.buy_laptop_name
+#     handle_buy_laptop(laptop_name)
 
 # Khởi tạo lịch sử chat và session_id nếu chưa có
 if "chat_history" not in st.session_state:
