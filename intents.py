@@ -412,6 +412,10 @@ def handle_buy_laptop(laptop_name: str):
     timestamp = 1
     form_key = f"buy_form_{clean_key(laptop_name)}_{timestamp}"
 
+    # Initialize session state for disabling form
+    if "form_disabled" not in st.session_state:
+        st.session_state.form_disabled = False
+
     st.subheader("📝 Order Form")
     st.write(f"You're ordering: **{laptop_name}**")
 
