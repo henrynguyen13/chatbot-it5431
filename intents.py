@@ -1,4 +1,6 @@
 import re
+import time
+
 import pandas as pd
 
 def detect_intent(query: str) -> str:
@@ -36,10 +38,8 @@ def detect_intent(query: str) -> str:
     elif re.search(r'\b(pick one|which one|recommend one|choose between|should i choose)\b', query):
         return "pick_one"
 
-
     elif re.search(
-            r"(will choose|will buy|confirm to buy|order|confirm to order|want to order|i want to order|i want to buy)\s+(asus|hp|lenovo|dell|msi|acer|apple|macbook|vivobook|ideapad|inspiron|swift|xps|thinkpad|surface)[\w\s-]*",
-            query, re.IGNORECASE
+            r"(will choose|will buy|confirm to buy|order|confirm to order|want to order|i want to order)\s+(asus|hp|lenovo|dell|msi|acer|apple|macbook|vivobook|ideapad|inspiron|swift|xps|thinkpad|surface)[\w\s-]*", query, re.IGNORECASE
     ):
         return "buy_laptop"
 
@@ -393,36 +393,68 @@ def handle_pick_one(user_request: str, df: pd.DataFrame) -> str:
     return "\n".join(result)
 
 import streamlit as st
-from invoice import insert_invoice
+from invoice import insert_invoice, get_invoice_count
 
-def handle_buy_laptop(user_request: str):
-    """Hiển thị form và lưu đơn hàng sau khi submit"""
-    st.write(f"🎉 Awesome! You want to order laptop: **{user_request}**")
-    st.write("Please enter below information to complete order process:")
 
-    with st.form("buy_laptop_form"):
-        full_name = st.text_input("Your fullname")
-        phone = st.text_input("Your phone number")
-        address = st.text_area("your address")
+def clean_key(key: str) -> str:
+    """Làm sạch key để chỉ chứa chữ cái, số và dấu gạch dưới"""
+    return re.sub(r'[^a-zA-Z0-9_]', '_', key)
 
-        col1, col2 = st.columns(2)
-        with col1:
-            submitted = st.form_submit_button("📦 Xác nhận mua")
-        with col2:
-            canceled = st.form_submit_button("❌ Hủy bỏ")
 
-        if canceled:
+def clean_key(key: str) -> str:
+    """Làm sạch key để chỉ chứa chữ cái, số và dấu gạch dưới"""
+    return re.sub(r'[^a-zA-Z0-9_]', '_', key)
+
+
+def handle_buy_laptop(laptop_name: str):
+    # Tạo key duy nhất bằng timestamp
+    timestamp = int(time.time() * 1000)  # Sử dụng timestamp để đảm bảo độc nhất
+    form_key = f"buy_form_{clean_key(laptop_name)}_{timestamp}"
+
+    st.subheader("📝 Order Form")
+    st.write(f"You're ordering: **{laptop_name}**")
+
+    # Sử dụng key duy nhất cho form
+    with st.form(key=form_key):
+        # Tạo key duy nhất cho mỗi widget
+        full_name = st.text_input("Full Name", key=f"full_name_{timestamp}")
+        phone = st.text_input("Phone Number", key=f"phone_{timestamp}")
+        address = st.text_area("Delivery Address", key=f"address_{timestamp}")
+
+        submitted = st.form_submit_button("✅ Confirm Order")
+        cancel = st.form_submit_button("❌ Cancel Order")
+
+        if cancel:
             st.session_state.show_buy_form = False
+            st.rerun()
 
         if submitted:
             if not full_name or not phone or not address:
-                st.warning("⛔ Vui lòng điền đầy đủ thông tin trước khi xác nhận.")
+                st.error("Please fill all required fields!")
             else:
-                insert_invoice(full_name, user_request, phone, address)
-                st.success("✅ Đã nhận thông tin đặt hàng. Cảm ơn bạn! Chúng tôi sẽ liên hệ và giao hàng trong 1–3 ngày.")
-                st.write("**📄 Thông tin đơn hàng:**")
-                st.markdown(f"- **Máy:** {user_request}")
-                st.markdown(f"- **Tên:** {full_name}")
-                st.markdown(f"- **SĐT:** {phone}")
-                st.markdown(f"- **Địa chỉ:** {address}")
-                st.session_state.show_buy_form = False  # Ẩn form
+                # Lấy số đơn hàng hiện tại
+                order_number = get_invoice_count() + 1
+
+                insert_invoice(full_name, laptop_name, phone, address)
+                st.session_state.show_buy_form = False
+
+                st.success("🎉 Order confirmed! Thank you for your purchase!")
+                st.balloons()
+
+                st.divider()
+                st.subheader("📦 Order Details")
+                st.markdown(f"**Order Number:** #ORD-{order_number:04d}")
+                st.markdown(f"**Product:** {laptop_name}")
+                st.markdown(f"**Customer:** {full_name}")
+                st.markdown(f"**Phone:** {phone}")
+                st.markdown(f"**Address:** {address}")
+                st.markdown("**Status:** Processing - We'll contact you shortly")
+
+                # Tự động làm mới giao diện sau 3 giây
+                st.markdown("""
+                <script>
+                setTimeout(function() {
+                    window.location.reload();
+                }, 3000);
+                </script>
+                """, unsafe_allow_html=True)

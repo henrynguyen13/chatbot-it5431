@@ -103,14 +103,20 @@ if user_input:
         result = process_query(user_input, st.session_state.filter_history)
 
         # Kiểm tra nếu kết quả chứa mã kích hoạt form
-        if "<script>" in result:
-            st.markdown(result, unsafe_allow_html=True)
+        if result and result.startswith("BUY_LAPTOP_TRIGGER:"):
+            laptop_name = result.split(":", 1)[1]
+            print('Order laptop: ', laptop_name)
             st.session_state.show_buy_form = True
-            laptop_name = re.search(r"document.getElementById\('laptop-name'\).value = '(.*?)'", result).group(1)
             st.session_state.buy_laptop_name = laptop_name
-        else:
+            placeholder.empty()
+            st.markdown(f"🎉 Awesome! You want to order laptop: **{laptop_name}**")
+            st.markdown("Please fill out the form below to complete your order.")
+        elif result:  # Xử lý kết quả bình thường
             placeholder.empty()
             st.markdown(result)
+        else:  # Xử lý khi result là None
+            placeholder.empty()
+            st.error("Sorry, I couldn't process your request. Please try again.")
 
     # Thêm câu trả lời vào lịch sử
     st.session_state.chat_history.append({"role": "assistant", "message": result})
@@ -121,3 +127,8 @@ if user_input:
 
     # Cập nhật giao diện
     st.rerun()
+
+if st.session_state.get("show_buy_form", False):
+    laptop_name = st.session_state.get("buy_laptop_name", "")
+    print(laptop_name)
+    handle_buy_laptop(laptop_name)

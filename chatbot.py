@@ -383,7 +383,7 @@ def process_query(user_request: str, filter_history: list) -> str:
     intent = detect_intent(user_request)
     print("intent", intent)  # Debugging line to check detected intent
    
-    if intent != "search" and intent not in ["compare", "pick_one", "sort", "filter_further"]:
+    if intent != "search" and intent not in ["compare", "pick_one", "sort", "filter_further", "buy_laptop"]:
         response = handle_intent(intent, user_request)
         memory.save_context({"user_request": user_request}, {"response": response})
         return response
@@ -394,22 +394,13 @@ def process_query(user_request: str, filter_history: list) -> str:
         return response
 
     if intent == "buy_laptop":
-        # Trích xuất tên laptop từ request
         laptop_match = re.search(
             r"(asus|hp|lenovo|dell|msi|acer|apple|macbook|vivobook|ideapad|inspiron|swift|xps|thinkpad|surface)[\w\s-]*",
             user_request, re.IGNORECASE
         )
         laptop_name = laptop_match.group(0) if laptop_match else "laptop"
-
-        # Trả về mã HTML/JS để kích hoạt form
-        return f"""
-           <script>
-           setTimeout(() => {{
-               document.getElementById('buy-laptop-btn').click();
-               document.getElementById('laptop-name').value = '{laptop_name}';
-           }}, 500);
-           </script>
-           """
+        # Trả về trigger string thay vì gọi handle_buy_laptop
+        return f"BUY_LAPTOP_TRIGGER:{laptop_name}"
 
     filters = parse_query_to_filters(user_request, memory, filter_history)  # Pass memory
     print("PARSE", filters)  # Debugging line to check parsed filters

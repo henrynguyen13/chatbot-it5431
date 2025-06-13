@@ -25,3 +25,11 @@ def insert_invoice(customer, laptop, phone, address):
     ''', (customer, laptop, phone, address))
     conn.commit()
     conn.close()
+
+def get_invoice_count():
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM invoice')
+    count = c.fetchone()[0]
+    conn.close()
+    return count
